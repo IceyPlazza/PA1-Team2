@@ -3,7 +3,7 @@ from pathlib import Path
 
 import numpy as np
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_MNIST_DIR = _PROJECT_ROOT / "MNIST"
 
 

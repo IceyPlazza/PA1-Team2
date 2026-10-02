@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
+# data.py lives at the repo root so other parts can share it.
+sys.path.insert(0, str(_ROOT))
 os.environ.setdefault("MPLCONFIGDIR", str(_ROOT / ".mplconfig"))
 os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "4")
 os.environ.setdefault("OMP_NUM_THREADS", "4")

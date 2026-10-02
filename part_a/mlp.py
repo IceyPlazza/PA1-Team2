@@ -67,7 +67,10 @@ class MLP:
         dz = probs.copy()
         dz[np.arange(batch), y] -= self.dtype.type(1)
         dz /= self.dtype.type(batch)
+        return self.backward_from(dz, activations, pre)
 
+    def backward_from(self, dz: np.ndarray, activations, pre):
+        """Backprop from dz = dLoss/dLogits of the output layer, for any loss."""
         grad_w = [None] * len(self.W)
         grad_b = [None] * len(self.b)
         for i in reversed(range(len(self.W))):
@@ -79,10 +82,16 @@ class MLP:
                 dz = da * (pre[i - 1] > 0)
         return grad_w, grad_b
 
-    def sgd_step(self, x: np.ndarray, y: np.ndarray, lr: float) -> float:
+    def sgd_step(self, x: np.ndarray, y: np.ndarray, lr: float, loss_fn=None) -> float:
+        """One SGD step. loss_fn=None is softmax cross-entropy; otherwise any object with
+        value_and_grad(logits, y) -> (loss, dLoss/dLogits)."""
         probs, activations, pre = self.forward(x)
-        loss = self.loss(probs, y)
-        grad_w, grad_b = self.backward(activations, pre, y)
+        if loss_fn is None:
+            loss = self.loss(probs, y)
+            grad_w, grad_b = self.backward(activations, pre, y)
+        else:
+            loss, dz = loss_fn.value_and_grad(pre[-1], y)
+            grad_w, grad_b = self.backward_from(dz, activations, pre)
         step = self.dtype.type(lr)
         for w, b, dw, db in zip(self.W, self.b, grad_w, grad_b):
             w -= step * dw
@@ -102,39 +111,35 @@ class MLP:
         return correct / y.shape[0]
 
 
-def grad_check(eps: float = 1e-5, rtol: float = 1e-5) -> float:
+def grad_check(eps: float = 1e-5, rtol: float = 1e-5, loss_fn=None) -> float:
+    """Compare backprop against central finite differences. loss_fn=None checks the
+    built-in cross-entropy path; otherwise the given loss object (see sgd_step)."""
     rng = np.random.default_rng(0)
     x = rng.standard_normal((6, 5)).astype(np.float64)
     y = rng.integers(0, 3, size=6)
     model = MLP([5, 4, 3], seed=1, dtype=np.float64)
     probs, activations, pre = model.forward(x)
-    grad_w, grad_b = model.backward(activations, pre, y)
+    if loss_fn is None:
+        grad_w, grad_b = model.backward(activations, pre, y)
+    else:
+        _, dz = loss_fn.value_and_grad(pre[-1], y)
+        grad_w, grad_b = model.backward_from(dz, activations, pre)
+
+    def objective() -> float:
+        probs, _, pre = model.forward(x)
+        return model.loss(probs, y) if loss_fn is None else loss_fn.value(pre[-1], y)
 
     worst = 0.0
-    for i, (w, gw) in enumerate(zip(model.W, grad_w)):
-        for index in np.ndindex(w.shape):
-            original = w[index]
-            w[index] = original + eps
-            loss_plus = model.loss(model.forward(x)[0], y)
-            w[index] = original - eps
-            loss_minus = model.loss(model.forward(x)[0], y)
-            w[index] = original
+    for param, grad in zip(model.W + model.b, grad_w + grad_b):
+        for index in np.ndindex(param.shape):
+            original = param[index]
+            param[index] = original + eps
+            loss_plus = objective()
+            param[index] = original - eps
+            loss_minus = objective()
+            param[index] = original
             numerical = (loss_plus - loss_minus) / (2 * eps)
-            analytic = float(gw[index])
-            denom = abs(numerical) + abs(analytic) + 1e-12
-            err = abs(numerical - analytic) / denom
-            worst = max(worst, err)
-        b = model.b[i]
-        gb = grad_b[i]
-        for j in range(b.shape[0]):
-            original = b[j]
-            b[j] = original + eps
-            loss_plus = model.loss(model.forward(x)[0], y)
-            b[j] = original - eps
-            loss_minus = model.loss(model.forward(x)[0], y)
-            b[j] = original
-            numerical = (loss_plus - loss_minus) / (2 * eps)
-            analytic = float(gb[j])
+            analytic = float(grad[index])
             denom = abs(numerical) + abs(analytic) + 1e-12
             err = abs(numerical - analytic) / denom
             worst = max(worst, err)
