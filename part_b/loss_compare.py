@@ -1,10 +1,4 @@
-"""Part B: train the same network under each loss and record learning curves and cost-to-target.
-
-Every run shares the architecture, initial weights, shuffle order, learning rate, batch size and
-epoch budget, so the loss is the only variable. Test accuracy is sampled every --eval-every SGD
-steps (not just per epoch) so steps / epochs / seconds to a target can be resolved below one epoch.
-Wall-clock time counts SGD steps only; evaluation is excluded, matching Part A.
-"""
+"""Part B: compare loss functions by learning curves and cost to reach a target accuracy."""
 
 from __future__ import annotations
 
@@ -40,7 +34,7 @@ DEFAULT_SIZES = "784,128,128,10"
 BLAS_THREADS = int(os.environ["VECLIB_MAXIMUM_THREADS"])
 TARGETS = (0.90,)
 
-# Each loss keeps one color in every plot (categorical slots 1-3, CVD-checked as a set).
+# One fixed color per loss across all plots.
 LOSS_COLOR = {"ce": "#2a78d6", "mse": "#eb6834", "hinge": "#1baf7a"}
 SURFACE = "#fcfcfb"
 INK = "#0b0b0b"
@@ -49,11 +43,12 @@ GRID = "#e4e3df"
 
 
 def tag(target: float) -> str:
+    """Target as a percent string, e.g. 0.9 -> "90"."""
     return str(int(round(target * 100)))
 
 
 def evaluate(model: MLP, x: np.ndarray, y: np.ndarray, loss_fn, batch_size: int = 2048):
-    """Return (accuracy, mean objective under loss_fn, mean cross-entropy) over a dataset."""
+    """Accuracy, mean loss_fn value and mean cross-entropy over a dataset."""
     ce = CrossEntropy()
     correct, objective, cross_entropy = 0, 0.0, 0.0
     for start in range(0, y.shape[0], batch_size):
@@ -70,6 +65,7 @@ def train(
     model: MLP, loss_fn, data, epochs: int, batch_size: int, lr: float, seed: int, eval_every: int,
     verbose: bool = True,
 ):
+    """Train one model under loss_fn; returns (history, checkpoints, steps_per_epoch)."""
     train_x, train_y, test_x, test_y = data
     rng = np.random.default_rng(seed)
     n = train_y.shape[0]
@@ -123,9 +119,7 @@ def train(
 
 
 def merge_repeats(reps: list[tuple[list[dict], list[dict], int]]):
-    """Keep the first repeat's curves and replace every train_seconds with the median across
-    repeats. Returns (history, checkpoints, identical) where identical says whether all repeats
-    produced the same accuracy trajectory (expected, since seeds are fixed)."""
+    """Merge repeats using median times; also report whether all accuracy curves matched."""
     history = [dict(h) for h in reps[0][0]]
     checkpoints = [dict(c) for c in reps[0][1]]
     for records, index in ((history, 0), (checkpoints, 1)):
@@ -138,6 +132,7 @@ def merge_repeats(reps: list[tuple[list[dict], list[dict], int]]):
 
 
 def summarize(key: str, reps: list[tuple[list[dict], list[dict], int]]) -> dict:
+    """Summarize one loss's repeats; returns (row, history, checkpoints)."""
     history, checkpoints, identical = merge_repeats(reps)
     steps_per_epoch = reps[0][2]
     totals = [rep[0][-1]["train_seconds"] for rep in reps]
@@ -170,7 +165,7 @@ def summarize(key: str, reps: list[tuple[list[dict], list[dict], int]]) -> dict:
 
 
 def add_cost_vs_ce(rows: list[dict]):
-    """steps_vs_ce_T = steps this loss needed to reach T divided by what cross-entropy needed."""
+    """Add each loss's steps-to-target relative to cross-entropy."""
     ce = next((r for r in rows if r["loss"] == "ce"), None)
     for row in rows:
         for target in TARGETS:
@@ -181,6 +176,7 @@ def add_cost_vs_ce(rows: list[dict]):
 
 
 def write_rows(path: Path, rows: list[dict], fields: list[str]):
+    """Write rows to CSV."""
     with path.open("w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fields)
         writer.writeheader()
@@ -189,6 +185,7 @@ def write_rows(path: Path, rows: list[dict], fields: list[str]):
 
 
 def _style(ax):
+    """Apply shared plot styling."""
     ax.set_facecolor(SURFACE)
     for side in ("top", "right"):
         ax.spines[side].set_visible(False)
@@ -204,8 +201,7 @@ def _style(ax):
 
 
 def plot_accuracy(runs: list[dict], x_key: str, xlabel: str, title: str, path: Path):
-    """Left panel: whole run on a log x-axis, since most of the climb happens inside epoch 1.
-    Right panel: linear x, zoomed onto the target band."""
+    """Plot test accuracy for the full run and zoomed to the target band."""
     fig, axes = plt.subplots(1, 2, figsize=(11.5, 4.6), facecolor=SURFACE)
     x_max = max(run["checkpoints"][-1][x_key] for run in runs)
     for ax, zoomed in zip(axes, (False, True)):
@@ -243,8 +239,7 @@ def plot_accuracy(runs: list[dict], x_key: str, xlabel: str, title: str, path: P
 
 
 def plot_losses(runs: list[dict], path: Path):
-    """One panel per loss (each objective has its own scale), plus test cross-entropy for every
-    run on a shared axis as the common yardstick."""
+    """Plot each loss's train/test objective, plus test cross-entropy for all runs."""
     fig, axes = plt.subplots(1, len(runs) + 1, figsize=(3.6 * (len(runs) + 1), 3.8), facecolor=SURFACE)
     for ax, run in zip(axes, runs):
         _style(ax)
@@ -276,6 +271,7 @@ def plot_losses(runs: list[dict], path: Path):
 
 
 def run(args):
+    """Run the loss comparison and write the CSVs and plots."""
     sizes = [int(s) for s in args.sizes.split(",")]
     keys = [k.strip() for k in args.losses.split(",")]
     unknown = [k for k in keys if k not in LOSSES]
@@ -376,6 +372,7 @@ def run(args):
 
 
 def parse_args():
+    """Parse command-line options."""
     parser = argparse.ArgumentParser(description="Part B loss-function comparison on MNIST")
     parser.add_argument("--losses", default=",".join(LOSSES), help=f"comma list from {list(LOSSES)}")
     parser.add_argument("--sizes", default=DEFAULT_SIZES, help="layer sizes; default is Part A's d2-w128")

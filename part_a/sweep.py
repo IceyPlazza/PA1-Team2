@@ -37,7 +37,7 @@ DEPTH_COLOR = {0: "#222222", 1: "#1f77b4", 2: "#2ca02c", 3: "#d62728"}
 
 
 def configurations() -> list[tuple[int, int | None]]:
-    """(depth, width). Width is None for the depth-0 linear baseline."""
+    """List the (depth, width) pairs to sweep."""
     configs = [(0, None)]
     for depth in DEPTHS:
         if depth == 0:
@@ -48,6 +48,7 @@ def configurations() -> list[tuple[int, int | None]]:
 
 
 def layer_sizes(depth: int, width: int | None, n_in: int = 784, n_out: int = 10) -> list[int]:
+    """Layer sizes for a given depth and width."""
     if depth == 0:
         return [n_in, n_out]
     if width is None:
@@ -56,6 +57,7 @@ def layer_sizes(depth: int, width: int | None, n_in: int = 784, n_out: int = 10)
 
 
 def label_of(depth: int, width: int | None) -> str:
+    """Configuration name, e.g. "d2-w128"."""
     if depth == 0:
         return "d0 linear"
     return f"d{depth}-w{width}"
@@ -72,6 +74,7 @@ def train_one(
     lr: float,
     seed: int,
 ) -> dict:
+    """Train one model and return its metrics and history."""
     rng = np.random.default_rng(seed)
     n = train_y.shape[0]
     history = []
@@ -127,6 +130,7 @@ def train_one(
 
 
 def _annotate(ax, rows, x_key):
+    """Label each point with its configuration name."""
     ordered = sorted(rows, key=lambda r: (r[x_key], r["test_accuracy"]))
     for i, row in enumerate(ordered):
         dy = 7 if i % 2 == 0 else -11
@@ -139,8 +143,29 @@ def _annotate(ax, rows, x_key):
         )
 
 
+def pareto_frontier(rows: list[dict], x_key: str) -> list[dict]:
+    """Rows that no cheaper row matches or beats in accuracy, ordered by cost."""
+    frontier, best = [], float("-inf")
+    for row in sorted(rows, key=lambda r: (r[x_key], -r["test_accuracy"])):
+        if row["test_accuracy"] > best:
+            frontier.append(row)
+            best = row["test_accuracy"]
+    return frontier
+
+
 def plot_accuracy_vs_cost(rows: list[dict], x_key: str, xlabel: str, title: str, path: Path):
+    """Plot test accuracy against a cost metric, with the Pareto frontier."""
     fig, ax = plt.subplots(figsize=(8.4, 5.4))
+    frontier = pareto_frontier(rows, x_key)
+    ax.plot(
+        [r[x_key] for r in frontier],
+        [r["test_accuracy"] * 100 for r in frontier],
+        color="#888888",
+        linestyle="--",
+        linewidth=1,
+        label="Pareto frontier",
+        zorder=2,
+    )
     for depth in DEPTHS:
         group = [r for r in rows if r["depth"] == depth]
         if not group:
@@ -166,6 +191,7 @@ def plot_accuracy_vs_cost(rows: list[dict], x_key: str, xlabel: str, title: str,
 
 
 def plot_learning_curves(rows: list[dict], path: Path):
+    """Plot test accuracy per epoch."""
     fig, ax = plt.subplots(figsize=(9.6, 5.4))
     colors = plt.cm.tab10.colors
     for i, row in enumerate(rows):
@@ -193,6 +219,7 @@ def plot_learning_curves(rows: list[dict], path: Path):
 
 
 def write_csv(rows: list[dict], path: Path):
+    """Write sweep results to CSV."""
     fields = [
         "name",
         "depth",
@@ -221,7 +248,38 @@ def write_csv(rows: list[dict], path: Path):
             writer.writerow({key: row.get(key) for key in fields})
 
 
+def read_csv(path: Path) -> list[dict]:
+    """Read sweep results back from CSV with the columns the cost plots need."""
+    with path.open(newline="") as f:
+        rows = list(csv.DictReader(f))
+    for row in rows:
+        row["depth"] = int(row["depth"])
+        row["test_accuracy"] = float(row["test_accuracy"])
+        row["train_seconds"] = float(row["train_seconds"])
+        row["n_params"] = int(row["n_params"])
+    return rows
+
+
+def plot_costs(rows: list[dict], out_dir: Path):
+    """Write the accuracy-vs-time and accuracy-vs-params plots."""
+    plot_accuracy_vs_cost(
+        rows,
+        "train_seconds",
+        "Training time (seconds)",
+        "Accuracy vs training time",
+        out_dir / "accuracy_vs_time.png",
+    )
+    plot_accuracy_vs_cost(
+        rows,
+        "n_params",
+        "Parameter count",
+        "Accuracy vs model size",
+        out_dir / "accuracy_vs_params.png",
+    )
+
+
 def run(epochs: int, batch_size: int, lr: float, seed: int, out_dir: Path, mnist_dir: Path | None):
+    """Run the full sweep and write the CSV and plots."""
     print(f"BLAS threads capped at {BLAS_THREADS}.", flush=True)
     print("Checking backprop against finite differences...", flush=True)
     err = grad_check()
@@ -278,27 +336,14 @@ def run(epochs: int, batch_size: int, lr: float, seed: int, out_dir: Path, mnist
 
     out_dir.mkdir(parents=True, exist_ok=True)
     write_csv(rows, out_dir / "sweep_results.csv")
-
-    plot_accuracy_vs_cost(
-        rows,
-        "train_seconds",
-        "Training time (seconds)",
-        "Accuracy vs training time",
-        out_dir / "accuracy_vs_time.png",
-    )
-    plot_accuracy_vs_cost(
-        rows,
-        "n_params",
-        "Parameter count",
-        "Accuracy vs model size",
-        out_dir / "accuracy_vs_params.png",
-    )
+    plot_costs(rows, out_dir)
     plot_learning_curves(rows, out_dir / "learning_curves.png")
     print(f"Wrote {out_dir / 'sweep_results.csv'}")
     print(f"Wrote plots in {out_dir}")
 
 
 def parse_args():
+    """Parse command-line options."""
     parser = argparse.ArgumentParser(description="Part A architecture sweep on MNIST")
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=128)
@@ -306,9 +351,18 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--mnist-dir", type=Path, default=None)
+    parser.add_argument(
+        "--plot-only",
+        action="store_true",
+        help="redraw the accuracy-vs-cost plots from <out>/sweep_results.csv without training",
+    )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
-    run(args.epochs, args.batch_size, args.lr, args.seed, args.out, args.mnist_dir)
+    if args.plot_only:
+        plot_costs(read_csv(args.out / "sweep_results.csv"), args.out)
+        print(f"Redrew accuracy-vs-cost plots in {args.out}")
+    else:
+        run(args.epochs, args.batch_size, args.lr, args.seed, args.out, args.mnist_dir)

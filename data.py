@@ -8,6 +8,7 @@ DEFAULT_MNIST_DIR = _PROJECT_ROOT / "MNIST"
 
 
 def _read_idx_images(path: Path) -> np.ndarray:
+    """Read an idx3 image file as flattened uint8 rows."""
     raw = np.fromfile(path, dtype=">u4", count=4)
     magic, n, rows, cols = (int(v) for v in raw)
     if magic != 2051:
@@ -20,6 +21,7 @@ def _read_idx_images(path: Path) -> np.ndarray:
 
 
 def _read_idx_labels(path: Path) -> np.ndarray:
+    """Read an idx1 label file."""
     raw = np.fromfile(path, dtype=">u4", count=2)
     magic, n = (int(v) for v in raw)
     if magic != 2049:
@@ -31,6 +33,7 @@ def _read_idx_labels(path: Path) -> np.ndarray:
 
 
 def load_mnist(mnist_dir: Path | None = None, dtype: np.dtype = np.float32):
+    """Load MNIST train/test sets with pixels scaled to [0, 1]."""
     root = Path(mnist_dir) if mnist_dir is not None else DEFAULT_MNIST_DIR
     train_x = _read_idx_images(root / "train-images.idx3-ubyte")
     train_y = _read_idx_labels(root / "train-labels.idx1-ubyte")
